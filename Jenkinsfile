@@ -1,4 +1,5 @@
 environment {
+    // This is correct from your file
     DOCKER_USERNAME = "rmaina" 
     IMAGE_NAME = "docker.io/${env.DOCKER_USERNAME}/jenkinslab-petclinic"
     IMAGE_TAG = "v${env.BUILD_NUMBER}"
