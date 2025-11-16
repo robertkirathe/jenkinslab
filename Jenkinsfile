@@ -1,7 +1,7 @@
 pipeline {
   agent {
     kubernetes {
-      label 'kaniko'
+      inheritFrom 'kaniko'
       defaultContainer 'kaniko'
     }
   }
@@ -14,8 +14,7 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
-        git branch: 'main', url: 'https://github.com/robertkirathe/jenkinslab.git'
-
+        git url: 'https://github.com/robertkirathe/jenkinslab.git'
       }
     }
 
