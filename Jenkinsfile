@@ -10,39 +10,34 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
-        git branch: 'main', url: 'https://github.com/robertkirathe/jenkinslab.git'
+        git url: 'https://github.com/robertkirathe/jenkinslab.git'
       }
     }
 
-    stage('Build') {
+    stage('Build with Kaniko') {
       steps {
-        script {
-          dockerImage = docker.build("${IMAGE_NAME}:${IMAGE_TAG}")
+        container('kaniko') {
+          sh '''
+            /kaniko/executor \
+              --context `pwd` \
+              --dockerfile `pwd`/Dockerfile \
+              --destination=${IMAGE_NAME}:${IMAGE_TAG} \
+              --verbosity=info \
+              --skip-tls-verify
+          '''
         }
       }
     }
 
     stage('Test') {
       steps {
-        sh 'echo "Running tests..."'
-        sh './mvnw test || true' // adjust if using Maven
+        sh './mvnw test || true'
       }
     }
 
     stage('Static Analysis') {
       steps {
-        sh 'echo "Running SonarQube scan..."'
-        // Optional: integrate SonarQube CLI or plugin here
-      }
-    }
-
-    stage('Push') {
-      steps {
-        script {
-          docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-creds') {
-            dockerImage.push()
-          }
-        }
+        sh 'echo "SonarQube scan placeholder..."'
       }
     }
   }
