@@ -10,7 +10,7 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
-        git url: 'https://github.com/robertkirathe/jenkinslab.git'
+        git branch: 'main', url: 'https://github.com/robertkirathe/jenkinslab.git'
       }
     }
 
