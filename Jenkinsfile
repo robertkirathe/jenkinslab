@@ -1,89 +1,81 @@
 pipeline {
     agent {
         kubernetes {
+            label 'jenkinslab-pipeline'
+            defaultContainer 'jnlp'
             yaml """
 apiVersion: v1
 kind: Pod
-metadata:
-  labels:
-    jenkins: slave
 spec:
   containers:
-  - name: jnlp
-    image: jenkins/inbound-agent:3345.v03dee9b_f88fc-1
-    args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
-    tty: true
   - name: kankio
     image: gcr.io/kaniko-project/executor:latest
-    command: ["/busybox/sh"]
-    args: ["sleep", "infinity"]
-    tty: true
+    command:
+    - /busybox/sh
+    args:
+    - -c
+    - "sleep 99d"
     volumeMounts:
-      - name: kaniko-secret
-        mountPath: /kaniko/.docker/
-  volumes:
     - name: kaniko-secret
-      secret:
-        secretName: dockerhub-secret
+      mountPath: /kaniko/.docker/
+  volumes:
+  - name: kaniko-secret
+    emptyDir: {}
 """
         }
     }
 
     environment {
         DOCKER_IMAGE = "rmaina/jenkinslab:latest"
-        DOCKER_CREDENTIALS_ID = "dockerhub"   // Your Jenkins DockerHub credentials ID
-        SONARQUBE_SERVER = "SonarQube"        // Your SonarQube server in Jenkins
+        DOCKER_CREDENTIALS_ID = "dockerhub-credentials" // Make sure this matches your Jenkins secret
+        SONARQUBE_SERVER = "SonarQube" // Replace with your Jenkins SonarQube server ID
     }
 
     stages {
         stage('Checkout') {
             steps {
-                git url: 'https://github.com/robertkirathe/jenkinslab.git'
+                git url: 'https://github.com/robertkirathe/jenkinslab.git', branch: 'main'
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build') {
             steps {
-                container('kankio') {
-                    sh """
-                    /kaniko/executor \
-                        --dockerfile=Dockerfile \
-                        --context=dir://workspace \
-                        --destination=${DOCKER_IMAGE} \
-                        --skip-tls-verify
-                    """
+                container('maven') {
+                    sh './mvnw clean package -B'
                 }
             }
         }
 
         stage('Test') {
             steps {
-                container('jnlp') {
-                    sh './mvnw test'
+                container('maven') {
+                    sh './mvnw test -B'
                 }
             }
         }
 
         stage('Static Analysis') {
             steps {
-                container('jnlp') {
+                script {
                     withSonarQubeEnv("${SONARQUBE_SERVER}") {
-                        sh './mvnw sonar:sonar'
+                        container('maven') {
+                            sh './mvnw sonar:sonar -B'
+                        }
                     }
                 }
             }
         }
 
-        stage('Push to Docker Hub') {
+        stage('Build & Push Docker Image') {
             steps {
                 container('kankio') {
                     withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDENTIALS_ID}", usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
                         sh """
-                        echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"$(echo -n $USERNAME:$PASSWORD | base64)\"}}}" > /kaniko/.docker/config.json
-                        /kaniko/executor \
-                            --dockerfile=Dockerfile \
-                            --context=dir://workspace \
-                            --destination=${DOCKER_IMAGE} \
+                        echo '{ "auths": { "https://index.docker.io/v1/": { "auth": "'\$(echo -n \$USERNAME:\$PASSWORD | base64)'" } } }' > /kaniko/.docker/config.json
+                        /kaniko/executor \\
+                            --dockerfile=Dockerfile \\
+                            --context=dir://workspace \\
+                            --destination=${DOCKER_IMAGE} \\
                             --skip-tls-verify
                         """
                     }
@@ -94,14 +86,13 @@ spec:
 
     post {
         always {
-            echo 'Cleaning up workspace...'
-            cleanWs()
+            echo 'Pipeline finished.'
         }
         success {
             echo 'Pipeline completed successfully!'
         }
         failure {
-            echo 'Pipeline failed. Check logs!'
+            echo 'Pipeline failed.'
         }
     }
 }
