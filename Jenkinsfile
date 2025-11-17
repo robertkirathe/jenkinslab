@@ -1,67 +1,107 @@
 pipeline {
     agent {
         kubernetes {
-            inheritFrom 'jenkinslab-agent'  // Use the pod template label you configured
-            defaultContainer 'kaniko'
+            yaml """
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    jenkins: slave
+spec:
+  containers:
+  - name: jnlp
+    image: jenkins/inbound-agent:3345.v03dee9b_f88fc-1
+    args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
+    tty: true
+  - name: kankio
+    image: gcr.io/kaniko-project/executor:latest
+    command: ["/busybox/sh"]
+    args: ["sleep", "infinity"]
+    tty: true
+    volumeMounts:
+      - name: kaniko-secret
+        mountPath: /kaniko/.docker/
+  volumes:
+    - name: kaniko-secret
+      secret:
+        secretName: dockerhub-secret
+"""
         }
     }
 
     environment {
-        IMAGE_NAME = "rmaina/jenkinslab"
-        IMAGE_TAG  = "v1.${BUILD_NUMBER}"
-        DOCKER_CONFIG = '/kaniko/.docker/'  // Kaniko Docker credentials path
+        DOCKER_IMAGE = "rmaina/jenkinslab:latest"
+        DOCKER_CREDENTIALS_ID = "dockerhub"   // Your Jenkins DockerHub credentials ID
+        SONARQUBE_SERVER = "SonarQube"        // Your SonarQube server in Jenkins
     }
 
     stages {
         stage('Checkout') {
             steps {
-                git url: 'https://github.com/robertkirathe/jenkinslab.git', branch: 'main'
+                git url: 'https://github.com/robertkirathe/jenkinslab.git'
             }
         }
 
-        stage('Build & Push with Kaniko') {
+        stage('Build Docker Image') {
             steps {
-                container('kaniko') {
-                    withCredentials([usernamePassword(
-                        credentialsId: 'dockerhub-creds', 
-                        usernameVariable: 'DOCKER_USERNAME', 
-                        passwordVariable: 'DOCKER_PASSWORD'
-                    )]) {
-                        sh '''
-                        mkdir -p /kaniko/.docker
-                        echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"$DOCKER_USERNAME\",\"password\":\"$DOCKER_PASSWORD\"}}}" > /kaniko/.docker/config.json
-
-                        /kaniko/executor \
-                            --context `pwd` \
-                            --dockerfile `pwd`/Dockerfile \
-                            --destination=${IMAGE_NAME}:${IMAGE_TAG} \
-                            --verbosity=info \
-                            --skip-tls-verify
-                        '''
-                    }
+                container('kankio') {
+                    sh """
+                    /kaniko/executor \
+                        --dockerfile=Dockerfile \
+                        --context=dir://workspace \
+                        --destination=${DOCKER_IMAGE} \
+                        --skip-tls-verify
+                    """
                 }
             }
         }
 
         stage('Test') {
             steps {
-                sh './mvnw test || true'
+                container('jnlp') {
+                    sh './mvnw test'
+                }
             }
         }
 
         stage('Static Analysis') {
             steps {
-                sh 'echo "SonarQube scan placeholder..."'
+                container('jnlp') {
+                    withSonarQubeEnv("${SONARQUBE_SERVER}") {
+                        sh './mvnw sonar:sonar'
+                    }
+                }
+            }
+        }
+
+        stage('Push to Docker Hub') {
+            steps {
+                container('kankio') {
+                    withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDENTIALS_ID}", usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                        sh """
+                        echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"$(echo -n $USERNAME:$PASSWORD | base64)\"}}}" > /kaniko/.docker/config.json
+                        /kaniko/executor \
+                            --dockerfile=Dockerfile \
+                            --context=dir://workspace \
+                            --destination=${DOCKER_IMAGE} \
+                            --skip-tls-verify
+                        """
+                    }
+                }
             }
         }
     }
 
     post {
+        always {
+            echo 'Cleaning up workspace...'
+            cleanWs()
+        }
         success {
-            echo "Pipeline finished successfully. Image pushed: ${IMAGE_NAME}:${IMAGE_TAG}"
+            echo 'Pipeline completed successfully!'
         }
         failure {
-            echo "Pipeline failed. Check logs."
+            echo 'Pipeline failed. Check logs!'
         }
     }
 }
