@@ -6,42 +6,51 @@ pipeline {
             yaml """
 apiVersion: v1
 kind: Pod
+metadata:
+  labels:
+    jenkins: slave
 spec:
   containers:
   - name: kankio
     image: gcr.io/kaniko-project/executor:latest
-    command:
-    - /busybox/sh
-    args:
-    - -c
-    - "sleep 99d"
+    # Kaniko executor entrypoint is already /kaniko/executor, no need for /busybox/sh
     volumeMounts:
     - name: kaniko-secret
       mountPath: /kaniko/.docker/
+  - name: maven
+    image: maven:3.9.5-eclipse-temurin-17
+    command:
+    - cat
+    tty: true
   volumes:
   - name: kaniko-secret
-    emptyDir: {}
+    secret:
+      secretName: docker-config
 """
         }
     }
 
     environment {
-        DOCKER_IMAGE = "rmaina/jenkinslab:latest"
-        DOCKER_CREDENTIALS_ID = "dockerhub-credentials" // Make sure this matches your Jenkins secret
-        SONARQUBE_SERVER = "SonarQube" // Replace with your Jenkins SonarQube server ID
+        DOCKER_REGISTRY = 'docker.io'
+        DOCKER_REPO     = 'your-dockerhub-username'
+        IMAGE_NAME      = 'jenkinslab'
+        IMAGE_TAG       = "v${BUILD_NUMBER}"
     }
 
     stages {
+
         stage('Checkout') {
             steps {
-                git url: 'https://github.com/robertkirathe/jenkinslab.git', branch: 'main'
+                container('jnlp') {
+                    checkout scm
+                }
             }
         }
 
         stage('Build') {
             steps {
                 container('maven') {
-                    sh './mvnw clean package -B'
+                    sh 'mvn clean package -B'
                 }
             }
         }
@@ -49,18 +58,17 @@ spec:
         stage('Test') {
             steps {
                 container('maven') {
-                    sh './mvnw test -B'
+                    sh 'mvn test -B'
                 }
             }
         }
 
         stage('Static Analysis') {
             steps {
-                script {
-                    withSonarQubeEnv("${SONARQUBE_SERVER}") {
-                        container('maven') {
-                            sh './mvnw sonar:sonar -B'
-                        }
+                container('maven') {
+                    // Adjust SonarQube environment and token
+                    withSonarQubeEnv('SonarQube') {
+                        sh 'mvn sonar:sonar -B'
                     }
                 }
             }
@@ -69,16 +77,13 @@ spec:
         stage('Build & Push Docker Image') {
             steps {
                 container('kankio') {
-                    withCredentials([usernamePassword(credentialsId: "${DOCKER_CREDENTIALS_ID}", usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
-                        sh """
-                        echo '{ "auths": { "https://index.docker.io/v1/": { "auth": "'\$(echo -n \$USERNAME:\$PASSWORD | base64)'" } } }' > /kaniko/.docker/config.json
-                        /kaniko/executor \\
-                            --dockerfile=Dockerfile \\
-                            --context=dir://workspace \\
-                            --destination=${DOCKER_IMAGE} \\
-                            --skip-tls-verify
-                        """
-                    }
+                    sh """
+                    /kaniko/executor \\
+                        --dockerfile=Dockerfile \\
+                        --context=\$WORKSPACE \\
+                        --destination=${DOCKER_REPO}/${IMAGE_NAME}:${IMAGE_TAG} \\
+                        --insecure
+                    """
                 }
             }
         }
@@ -86,13 +91,13 @@ spec:
 
     post {
         always {
-            echo 'Pipeline finished.'
+            echo "Pipeline finished. Cleaning up..."
         }
         success {
-            echo 'Pipeline completed successfully!'
+            echo "Pipeline completed successfully!"
         }
         failure {
-            echo 'Pipeline failed.'
+            echo "Pipeline failed. Check logs."
         }
     }
 }
