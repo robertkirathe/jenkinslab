@@ -1,7 +1,19 @@
 pipeline {
     agent {
         kubernetes {
-            inheritFrom 'default'
+            label 'jenkinslab-agent'
+            yaml """
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+    - name: jnlp
+      image: jenkins/inbound-agent:3345.v03dee9b_f88fc-1
+      args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
+      tty: true
+      command:
+        - cat
+"""
         }
     }
 
@@ -13,7 +25,6 @@ pipeline {
 
         stage('Checkout') {
             steps {
-                // run in the jnlp container
                 container('jnlp') {
                     git url: 'https://github.com/robertkirathe/jenkinslab.git', branch: 'main'
                 }
@@ -39,7 +50,6 @@ pipeline {
                 container('jnlp') {
                     sh '''
                         echo "Running SonarQube scan..."
-                        # Replace with your SonarQube scan command if needed
                         ./mvnw sonar:sonar || true
                     '''
                 }
@@ -81,7 +91,7 @@ pipeline {
 
     post {
         success {
-            echo "Pipeline completed successfully. Docker image pushed to Docker Hub: ${DOCKER_IMAGE}"
+            echo "Pipeline completed successfully. Docker image pushed: ${DOCKER_IMAGE}"
         }
         failure {
             echo "Pipeline failed. Check logs."
