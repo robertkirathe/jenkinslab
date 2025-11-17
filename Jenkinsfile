@@ -9,10 +9,7 @@ spec:
   containers:
     - name: jnlp
       image: jenkins/inbound-agent:3345.v03dee9b_f88fc-1
-      args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
       tty: true
-      command:
-        - cat
 """
         }
     }
@@ -35,8 +32,8 @@ spec:
             steps {
                 container('jnlp') {
                     sh '''
+                        # Install Maven if missing
                         if ! command -v mvn >/dev/null; then
-                            echo "Installing Maven..."
                             apt-get update && apt-get install -y maven
                         fi
                         ./mvnw -B test
@@ -60,8 +57,8 @@ spec:
             steps {
                 container('jnlp') {
                     sh '''
+                        # Install Docker CLI if missing
                         if ! command -v docker >/dev/null; then
-                            echo "Installing Docker CLI..."
                             apt-get update && apt-get install -y docker.io
                         fi
                         docker build -t ${DOCKER_IMAGE} .
@@ -74,8 +71,8 @@ spec:
             steps {
                 container('jnlp') {
                     withCredentials([usernamePassword(
-                        credentialsId: 'dockerhub',
-                        usernameVariable: 'USER',
+                        credentialsId: 'dockerhub', 
+                        usernameVariable: 'USER', 
                         passwordVariable: 'PASS'
                     )]) {
                         sh '''
@@ -97,5 +94,4 @@ spec:
             echo "Pipeline failed. Check logs."
         }
     }
-
 }
